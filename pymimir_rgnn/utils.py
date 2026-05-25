@@ -101,7 +101,7 @@ def relations_to_tensors(term_id_groups: dict[str, list[int]], device: torch.dev
     return result
 
 
-def gumbel_sigmoid(logits, tau=1.0, hard=False, eps=1e-10) -> torch.Tensor:
+def gumbel_sigmoid(logits, tau=1.0, hard=False, eps=1e-10, sample_noise=True) -> torch.Tensor:
     """
     Binary Concrete / Gumbel-Sigmoid with double noise trick.
 
@@ -110,18 +110,20 @@ def gumbel_sigmoid(logits, tau=1.0, hard=False, eps=1e-10) -> torch.Tensor:
         tau: Temperature (lower -> harder samples).
         hard: If True, returns hard {0,1} but with straight-through gradients.
         eps: Small constant for numerical stability.
+        sample_noise: If False, skips Gumbel noise sampling (deterministic sigmoid).
 
     Returns:
         Sampled tensor of same shape as logits.
     """
-    # Sample two Gumbel noises
-    u1 = torch.rand_like(logits)
-    u2 = torch.rand_like(logits)
-    g1 = -torch.log(-torch.log(u1 + eps) + eps)
-    g2 = -torch.log(-torch.log(u2 + eps) + eps)
-
-    # Double noise trick
-    y_soft = torch.sigmoid((logits + g1 - g2) / tau)
+    if sample_noise:
+        # Sample two Gumbel noises
+        u1 = torch.rand_like(logits)
+        u2 = torch.rand_like(logits)
+        g1 = -torch.log(-torch.log(u1 + eps) + eps)
+        g2 = -torch.log(-torch.log(u2 + eps) + eps)
+        y_soft = torch.sigmoid((logits + g1 - g2) / tau)
+    else:
+        y_soft = torch.sigmoid(logits / tau)
 
     if hard:
         # Straight-through binarization

@@ -158,7 +158,8 @@ class RelationalLayerStackModule(nn.Module):
                     global_messages = self._update_normalization(global_messages)
                 next_node_embeddings = global_messages + next_node_embeddings
             if self._config.binarize_updates:
-                next_node_embeddings = gumbel_sigmoid(next_node_embeddings, hard=True)
+                sample_noise = not (self._config.deterministic_binarize and not self.training)
+                next_node_embeddings = gumbel_sigmoid(next_node_embeddings, hard=True, sample_noise=sample_noise)
             if self._config.residual_updates:
                 next_node_embeddings = node_embeddings + next_node_embeddings
             node_embeddings = next_node_embeddings
