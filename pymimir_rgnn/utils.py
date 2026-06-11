@@ -133,3 +133,73 @@ def gumbel_sigmoid(logits, tau=1.0, hard=False, eps=1e-10, sample_noise=True) ->
         y = y_soft
 
     return y
+
+
+def binarize(logits, tau=1.0) -> torch.Tensor:
+    """Deterministic straight-through binarizer mapping each logit into {0, 1}.
+
+    Forward pass (exact, deterministic)::
+
+        value = 1 if logits > 0 else 0
+
+    Backward pass: the gradient of a sigmoid surrogate ``sigmoid(logits / tau)``.
+
+    The forward pass is noise-free, so repeated passes on the same input produce
+    identical bits. This is required when the bits are to be decoded into
+    symbolic formulas: a bit can only correspond to concept membership if it is
+    a deterministic function of the input. It also avoids the sampling variance
+    that a Gumbel-based binarizer injects at every layer during training.
+
+    Args:
+        logits: Tensor of pre-activation values.
+        tau: Temperature of the backward surrogate (lower -> sharper, more local
+            gradients around the threshold).
+
+    Returns:
+        Tensor of same shape as logits with values in {0, 1} and
+        straight-through gradients.
+    """
+    y_soft = torch.sigmoid(logits / tau)
+    y_hard = (logits > 0).float()
+    return y_hard.detach() - y_soft.detach() + y_soft
+
+
+def ternarize(logits, tau=1.0, threshold=1.0) -> torch.Tensor:
+    """Deterministic straight-through ternarizer mapping each logit into {-1, 0, 1}.
+
+    Forward pass (exact, deterministic)::
+
+        value = 1 if logits > threshold, -1 if logits < -threshold, else 0
+
+    Backward pass: the gradient of a smooth two-sigmoid surrogate::
+
+        y_soft = sigmoid((logits - threshold) / tau) - sigmoid((-logits - threshold) / tau)
+
+    The forward pass is noise-free, so the three zones are deterministic for
+    *any* logit value (not just well-trained ones), and repeated forward passes
+    on the same input produce identical outputs. This is required when the
+    quantized values are to be decoded into symbolic formulas: a bit can only
+    correspond to concept membership if it is a deterministic function of the
+    input. It also removes the sampling variance that a Gumbel-based quantizer
+    injects at every layer during training.
+
+    The surrogate gradient at ``logits = 0`` is ``2 * sigmoid'(threshold / tau) / tau``
+    (~0.39 with the defaults), so logits inside the 0 zone still receive a usable
+    gradient and can learn to cross the threshold. Keep ``threshold`` near the
+    scale of the incoming activations (~1 after layer normalization); a much
+    larger threshold puts all units in the 0 zone at initialization and starves
+    the network of signal.
+
+    Args:
+        logits: Tensor of pre-activation values.
+        tau: Temperature of the backward surrogate (lower -> sharper, more local
+            gradients around the thresholds).
+        threshold: Location of the +-1 boundary; sets the 0 zone width.
+
+    Returns:
+        Tensor of same shape as logits with values in {-1, 0, 1} and
+        straight-through gradients.
+    """
+    y_soft = torch.sigmoid((logits - threshold) / tau) - torch.sigmoid((-logits - threshold) / tau)
+    y_hard = (logits > threshold).float() - (logits < -threshold).float()
+    return y_hard.detach() - y_soft.detach() + y_soft
